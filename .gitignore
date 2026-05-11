@@ -1,0 +1,24 @@
+# 敏感凭据
+config.toml
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# 日志
+*.log
+
+# IDE
+.DS_Store
+.idea/
+.vscode/

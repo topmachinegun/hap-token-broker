@@ -1,0 +1,26 @@
+[Unit]
+Description=HAP Personal MCP Token Broker
+Documentation=https://github.com/topmachinegun/hap-app-access
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__PYTHON_BIN__ __INSTALL_DIR__/src/broker.py
+# 按 SIGUSR1 触发立即刷新（hap-token refresh 使用）
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Restart=always
+RestartSec=60
+Environment=LANG=C.UTF-8
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# 日志走 systemd journal：journalctl -u hap-token-broker -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hap-token-broker
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,69 @@
+# HAP Token Broker - 配置模板
+#
+# 复制到: ~/.config/hap-token-broker/config.toml
+# 权限:   chmod 600 ~/.config/hap-token-broker/config.toml
+#
+# 修改 [profiles.*] 下的 account / password / oauth_app_id 即可。
+# broker 启动后会自动读取本文件，按 check_interval_minutes 巡检。
+
+# ---- 全局参数 ----
+# 巡检间隔（分钟）。broker 每隔这段时间扫一遍所有 profile，决定是否刷新。
+check_interval_minutes = 30
+
+# 刷新阈值（小时）。token 距离过期 <= 这个值时触发刷新。
+# token 实际 TTL 约 24h；默认 4h 留足边缘 window，避免刚好卡过期。
+refresh_before_expire_hours = 4.0
+
+# 连续失败阈值。某个 profile 连续失败达到这个次数后，弹 macOS 通知告警（仅一次，直到恢复）。
+max_consecutive_failures = 5
+
+# md-generate-mcp-config 可执行文件绝对路径。
+# 默认值（hap-oauth-mcp skill 的 venv bin，HOME 自动展开）：
+#   ~/.qoder/skills/hap-oauth-mcp/.venv/bin/md-generate-mcp-config
+# 152 服务器实测 symlink 到 /root/.openclaw/skills/hap-oauth-mcp/.venv/bin/md-generate-mcp-config
+# 若装在别处，显式覆盖：
+# md_generate_bin = "/usr/local/bin/md-generate-mcp-config"
+
+# ---- Profile: 一个账号 + 一个 OAuth App = 一个 profile ----
+# profile key 是内部标识，消费方用 `hap-token get <key>` 拿 URL。
+
+[profiles.claw-crm]
+# 手机号。支持两种写法，broker 会自动把 11 位国内手机号补 +86：
+#   account = "15801477125"
+#   account = "+8615801477125"
+account = "15801477125"
+password = "REPLACE_ME"
+# OAuth App ID（明道云后台 → 开放平台 → OAuth App 拿到）
+oauth_app_id = "REPLACE_ME"
+# OAuth App Secret（明道云后台 → 开放平台 → OAuth App 详情页获取）。
+# 可选：填写后 broker 优先使用 refresh_token 自刷（方案A），
+# 无需走 password grant 全量登录，可绕过 IP 风控。
+# 留空则每次刷新走 password grant (md-generate-mcp-config)。
+client_secret = "REPLACE_ME"
+
+# 需要多账号/多 App 时，再加一个 section 即可。示例：
+# [profiles.analytics]
+# account = "13800000000"
+# password = "xxx"
+# oauth_app_id = "yyy"
+
+# ---- 远程同步（sync 模式，可选）----
+# 启用后本机 broker 不再请求密码刷新 token，改为 SSH 到远程服务器
+# （如 152 测试机）拉取已刷好的 token JSON。
+# 适用于多机器共享同一 OAuth 授权的场景，避免授权互斥踢下线。
+#
+# 规则：只有一台机器（如 152）启用正常刷新模式，其余机器全部
+# 启用 sync 模式从该机器同步。
+#
+# [sync]
+# enabled = true
+# remote_host = "152.136.138.32"
+# remote_user = "ubuntu"
+# remote_token_dir = "/root/.local/share/hap-token-broker/tokens"
+# ssh_key = "~/.ssh/id_ed25519"
+# 新模式下 review_project.py 已改为直读 broker token（见 crm-project-review SKILL.md），
+# 此镜像仅为过渡期兜底：若仍有老脚本调用 mcp_token.py（它会读 ~/.cache/hap-mcp/token.json），
+# 开启这个配置即可让它们零改动受益。
+#
+# [mirror_to_legacy]
+# claw-crm = "~/.cache/hap-mcp/token.json"
