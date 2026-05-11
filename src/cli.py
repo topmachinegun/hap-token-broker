@@ -5,9 +5,8 @@
   get <profile>            打印 URL（默认纯 stdout，方便 $(hap-token get xxx)）
   get <profile> --check    先校验 expires_at；已过期 → exit 1
   list                     列所有已缓存的 profile（名、过期时间、剩余小时）
-  status                   打印 daemon 存活 + 各 profile 状态（含 sync/refresh 模式）
-  refresh <profile>        向 daemon 发 SIGUSR1 触发刷新/sync；daemon 不在则前台跑一次
-  sync <profile>           显式从远程 152 同步 token（sync 模式专用）
+  status                   打印 daemon 存活 + 各 profile 状态
+  refresh <profile>        向 daemon 发 SIGUSR1 触发刷新；daemon 不在则前台跑一次
   path <profile>           打印 token JSON 文件绝对路径（供纯文件读消费方）
 
 用法示例：
@@ -17,12 +16,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,13 +30,6 @@ if str(_HERE) not in sys.path:
 import config as cfg_mod  # noqa: E402
 import refresher  # noqa: E402
 import storage  # noqa: E402
-
-
-def _extract_host_from_url(url: str) -> str | None:
-    """从 MCP URL 中提取 host，如 api2.mingdao.com。"""
-    import re
-    m = re.search(r'https?://([^/]+)', url)
-    return m.group(1) if m else None
 
 
 PID_FILE = Path.home() / ".local" / "share" / "hap-token-broker" / "broker.pid"
@@ -107,81 +97,11 @@ def cmd_list(_args: argparse.Namespace) -> int:
 def cmd_status(_args: argparse.Namespace) -> int:
     pid = _read_pid()
     cfg_path = cfg_mod.resolve_config_path()
-    has_cfg = cfg_path.exists()
-    mode = "sync" if has_cfg and _sync_enabled() else "refresh"
-    print(f"config:       {cfg_path} ({'exists' if has_cfg else 'MISSING'})")
-    print(f"mode:         {mode}")
+    print(f"config:       {cfg_path} ({'exists' if cfg_path.exists() else 'MISSING'})")
     print(f"daemon_pid:   {pid if pid else '<not running>'}")
     print(f"token_dir:    {storage.TOKEN_DIR}")
     print()
     return cmd_list(argparse.Namespace())
-
-
-def _sync_enabled() -> bool:
-    """检查 config 是否启用了 sync 模式。"""
-    try:
-        cfg = cfg_mod.load_config()
-        return cfg.sync.is_configured()
-    except cfg_mod.ConfigError:
-        return False
-
-
-def _sync_from_remote_cli(name: str, duration_ms: int | None = None) -> storage.TokenRecord:
-    """CLI 前台：SSH 到远程拉取 token。"""
-    cfg = cfg_mod.load_config()
-    if not cfg.sync.is_configured():
-        raise SystemExit("sync 模式未配置")
-
-    sync = cfg.sync
-    remote_path = f"{sync.remote_token_dir}/{name}.json"
-    ssh_key = os.path.expanduser(sync.ssh_key)
-
-    cmd = [
-        "ssh",
-        "-i", ssh_key,
-        "-o", "ConnectTimeout=10",
-        "-o", "StrictHostKeyChecking=accept-new",
-        f"{sync.remote_user}@{sync.remote_host}",
-        "sudo", "cat", remote_path,
-    ]
-
-    t0 = time.monotonic()
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except subprocess.TimeoutExpired:
-        raise SystemExit(f"ERROR: SSH 到 {sync.remote_host} 超时")
-    except OSError as e:
-        raise SystemExit(f"ERROR: SSH 命令启动失败: {e}")
-
-    elapsed = duration_ms if duration_ms is not None else int((time.monotonic() - t0) * 1000)
-
-    if result.returncode != 0:
-        err = (result.stderr or "").strip()[-200:]
-        raise SystemExit(f"ERROR: 远程读取失败 (exit={result.returncode}): {err}")
-
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"ERROR: 远程 token JSON 解析失败: {e}")
-
-    try:
-        record = storage.TokenRecord.from_json(data)
-    except (KeyError, ValueError) as e:
-        raise SystemExit(f"ERROR: 远程 token 数据格式异常: {e}")
-
-    storage.write_atomic(record)
-    print(f"synced from {sync.remote_host} in {elapsed}ms")
-    print(f"  expires_at: {record.expires_at.isoformat()}")
-    print(f"  url:        {storage.redact_url(record.url)}")
-    return record
-
-
-def cmd_sync(args: argparse.Namespace) -> int:
-    """显式从 152 同步 token。"""
-    if args.profile not in storage.list_profiles():
-        print(f"NOTE: profile '{args.profile}' 本地无缓存，尝试从远程拉取...", file=sys.stderr)
-    _sync_from_remote_cli(args.profile)
-    return 0
 
 
 def cmd_refresh(args: argparse.Namespace) -> int:
@@ -204,21 +124,20 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         print(f"ERROR: profile '{args.profile}' 未在配置中定义", file=sys.stderr)
         return 2
 
-    # sync 模式：从远程拉取
-    if cfg.sync.is_configured():
-        _sync_from_remote_cli(args.profile)
-        return 0
-
     profile = cfg.profiles[args.profile]
     try:
-        url, duration_ms, new_refresh_token = _try_refresh_cli(args.profile, profile)
+        url, duration_ms = refresher.md_generate(
+            cfg.md_generate_bin,
+            profile.account,
+            profile.password,
+            profile.oauth_app_id,
+        )
     except refresher.RefreshError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 3
 
     record = storage.build_record(
-        args.profile, url, profile.oauth_app_id, profile.account,
-        duration_ms, refresh_token=new_refresh_token,
+        args.profile, url, profile.oauth_app_id, profile.account, duration_ms,
     )
     storage.write_atomic(record)
     legacy = cfg.mirror_to_legacy.get(args.profile)
@@ -229,49 +148,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
-def _try_refresh_cli(name: str, profile):
-    """CLI 前台刷新：优先 refresh_token grant，失败回退 password grant。"""
-    rec = storage.read(name)
-    host = _extract_host_from_url(rec.url) if rec else None
-
-    if rec is not None and getattr(rec, 'refresh_token', None) and profile.client_secret and host:
-        print(f"trying refresh_token grant (host={host})...", file=sys.stderr)
-        try:
-            url, new_rt, duration_ms = refresher.refresh_token_grant(
-                host=host,
-                refresh_token=getattr(rec, 'refresh_token', None),
-                client_id=profile.oauth_app_id,
-                client_secret=profile.client_secret,
-            )
-            print(f"refresh_token grant ok in {duration_ms}ms", file=sys.stderr)
-            return url, duration_ms, new_rt
-        except refresher.RefreshError as e:
-            print(f"WARN: refresh_token grant failed: {e}", file=sys.stderr)
-            print("falling back to password grant...", file=sys.stderr)
-
-    url, duration_ms = refresher.md_generate(
-        cfg_mod.load_config().md_generate_bin,
-        profile.account,
-        profile.password,
-        profile.oauth_app_id,
-    )
-    return url, duration_ms, None
-
-
 def cmd_path(args: argparse.Namespace) -> int:
     print(storage.token_path(args.profile))
-    return 0
-
-
-def cmd_inject_rt(args: argparse.Namespace) -> int:
-    """向指定 profile 的 token JSON 注入/更新 refresh_token。"""
-    rec = storage.read(args.profile)
-    if rec is None:
-        print(f"ERROR: profile '{args.profile}' 无缓存 token，请先完成一次 token 获取", file=sys.stderr)
-        return 1
-    setattr(rec, 'refresh_token', args.refresh_token)
-    storage.write_atomic(rec)
-    print(f"refresh_token injected into {args.profile} (expires_at={rec.expires_at.isoformat()})")
     return 0
 
 
@@ -296,18 +174,9 @@ def main() -> int:
     p_refresh.add_argument("profile")
     p_refresh.set_defaults(func=cmd_refresh)
 
-    p_sync = sub.add_parser("sync", help="显式从远程 152 同步 token")
-    p_sync.add_argument("profile")
-    p_sync.set_defaults(func=cmd_sync)
-
     p_path = sub.add_parser("path", help="打印指定 profile 的 token 文件路径")
     p_path.add_argument("profile")
     p_path.set_defaults(func=cmd_path)
-
-    p_inject = sub.add_parser("inject-refresh-token", help="注入 refresh_token 到指定 profile")
-    p_inject.add_argument("profile")
-    p_inject.add_argument("refresh_token", help="OAuth2 refresh_token 值")
-    p_inject.set_defaults(func=cmd_inject_rt)
 
     args = parser.parse_args()
     return args.func(args)

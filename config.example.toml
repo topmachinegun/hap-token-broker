@@ -35,11 +35,6 @@ account = "15801477125"
 password = "REPLACE_ME"
 # OAuth App ID（明道云后台 → 开放平台 → OAuth App 拿到）
 oauth_app_id = "REPLACE_ME"
-# OAuth App Secret（明道云后台 → 开放平台 → OAuth App 详情页获取）。
-# 可选：填写后 broker 优先使用 refresh_token 自刷（方案A），
-# 无需走 password grant 全量登录，可绕过 IP 风控。
-# 留空则每次刷新走 password grant (md-generate-mcp-config)。
-client_secret = "REPLACE_ME"
 
 # 需要多账号/多 App 时，再加一个 section 即可。示例：
 # [profiles.analytics]
@@ -47,21 +42,7 @@ client_secret = "REPLACE_ME"
 # password = "xxx"
 # oauth_app_id = "yyy"
 
-# ---- 远程同步（sync 模式，可选）----
-# 启用后本机 broker 不再请求密码刷新 token，改为 SSH 到远程服务器
-# （如 152 测试机）拉取已刷好的 token JSON。
-# 适用于多机器共享同一 OAuth 授权的场景，避免授权互斥踢下线。
-#
-# 规则：只有一台机器（如 152）启用正常刷新模式，其余机器全部
-# 启用 sync 模式从该机器同步。
-#
-# [sync]
-# enabled = true
-# remote_host = "152.136.138.32"
-# remote_user = "ubuntu"
-# remote_token_dir = "/root/.local/share/hap-token-broker/tokens"
-# ssh_key = "~/.ssh/id_ed25519"
-# 新模式下 review_project.py 已改为直读 broker token（见 crm-project-review SKILL.md），
+# ---- 兼容老脚本（可选）----
 # 此镜像仅为过渡期兜底：若仍有老脚本调用 mcp_token.py（它会读 ~/.cache/hap-mcp/token.json），
 # 开启这个配置即可让它们零改动受益。
 #

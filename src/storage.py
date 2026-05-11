@@ -21,7 +21,6 @@ class TokenRecord:
     account_redacted: str
     oauth_app_id: str
     last_refresh_duration_ms: int | None = None
-    refresh_token: str | None = None
 
     def is_expired(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(timezone.utc)
@@ -41,8 +40,6 @@ class TokenRecord:
             "oauth_app_id": self.oauth_app_id,
             "last_refresh_duration_ms": self.last_refresh_duration_ms,
         }
-        if self.refresh_token:
-            d["refresh_token"] = self.refresh_token
         return d
 
     @classmethod
@@ -55,7 +52,6 @@ class TokenRecord:
             account_redacted=d.get("account_redacted", ""),
             oauth_app_id=d.get("oauth_app_id", ""),
             last_refresh_duration_ms=d.get("last_refresh_duration_ms"),
-            refresh_token=d.get("refresh_token"),
         )
 
 
@@ -117,7 +113,7 @@ def mirror_to_legacy(record: TokenRecord, legacy_path: Path) -> None:
     _atomic_write(legacy_path.expanduser(), payload)
 
 
-def build_record(profile_name: str, url: str, oauth_app_id: str, account: str, duration_ms: int, refresh_token: str | None = None) -> TokenRecord:
+def build_record(profile_name: str, url: str, oauth_app_id: str, account: str, duration_ms: int) -> TokenRecord:
     now = datetime.now(timezone.utc)
     return TokenRecord(
         profile=profile_name,
@@ -127,7 +123,6 @@ def build_record(profile_name: str, url: str, oauth_app_id: str, account: str, d
         account_redacted=redact_account(account),
         oauth_app_id=oauth_app_id,
         last_refresh_duration_ms=duration_ms,
-        refresh_token=refresh_token,
     )
 
 
@@ -143,16 +138,3 @@ def redact_url(url: str) -> str:
     head, _, tail = url.partition("Bearer")
     tail = tail.lstrip("%20").lstrip(" ")
     return f"{head}Bearer%20...{tail[-6:]}"
-
-
-def extract_access_token(url: str) -> str | None:
-    """从 MCP URL 中提取 Bearer access_token。"""
-    if "Bearer" not in url:
-        return None
-    _, _, tail = url.partition("Bearer")
-    return tail.lstrip("%20").lstrip(" ")
-
-
-def build_mcp_url(host: str, access_token: str) -> str:
-    """用 host + access_token 构建标准 MCP URL。"""
-    return f"https://{host}/mcp?Authorization=Bearer%20{access_token}"

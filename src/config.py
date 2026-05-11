@@ -30,20 +30,6 @@ class Profile:
     account: str
     password: str
     oauth_app_id: str
-    client_secret: str = ""
-
-
-@dataclass
-class SyncConfig:
-    """远程同步配置：从 152 服务器拉取 token，本机不刷新。"""
-    enabled: bool = False
-    remote_host: str = ""
-    remote_user: str = "ubuntu"
-    remote_token_dir: str = "/root/.local/share/hap-token-broker/tokens"
-    ssh_key: str = "~/.ssh/id_ed25519"
-
-    def is_configured(self) -> bool:
-        return self.enabled and bool(self.remote_host)
 
 
 @dataclass
@@ -54,7 +40,6 @@ class Config:
     md_generate_bin: Path = DEFAULT_MD_GEN_BIN
     profiles: dict[str, Profile] = field(default_factory=dict)
     mirror_to_legacy: dict[str, Path] = field(default_factory=dict)
-    sync: SyncConfig = field(default_factory=SyncConfig)
     source_path: Path | None = None
 
 
@@ -115,7 +100,6 @@ def load_config(path: Path | None = None) -> Config:
         account = str(pdata.get("account", "")).strip()
         password = str(pdata.get("password", "")).strip()
         oauth_app_id = str(pdata.get("oauth_app_id", "")).strip()
-        client_secret = str(pdata.get("client_secret", "")).strip()
         missing = [k for k, v in [("account", account), ("password", password), ("oauth_app_id", oauth_app_id)] if not v]
         if missing:
             raise ConfigError(f"[profiles.{name}] 缺少必填字段: {', '.join(missing)}")
@@ -124,7 +108,6 @@ def load_config(path: Path | None = None) -> Config:
             account=_normalize_account(account),
             password=password,
             oauth_app_id=oauth_app_id,
-            client_secret=client_secret,
         )
 
     mirror_raw = raw.get("mirror_to_legacy", {}) or {}
@@ -133,18 +116,8 @@ def load_config(path: Path | None = None) -> Config:
             raise ConfigError(f"mirror_to_legacy.{k} 引用了不存在的 profile")
         cfg.mirror_to_legacy[k] = Path(str(v)).expanduser()
 
-    # [sync] 远程同步配置（本机纯读模式）
-    sync_raw = raw.get("sync", {}) or {}
-    if sync_raw:
-        cfg.sync = SyncConfig(
-            enabled=bool(sync_raw.get("enabled", False)),
-            remote_host=str(sync_raw.get("remote_host", "")).strip(),
-            remote_user=str(sync_raw.get("remote_user", "ubuntu")).strip(),
-            remote_token_dir=str(sync_raw.get("remote_token_dir", "/root/.local/share/hap-token-broker/tokens")).strip(),
-            ssh_key=str(sync_raw.get("ssh_key", "~/.ssh/id_ed25519")).strip(),
-        )
-        if cfg.sync.enabled and not cfg.sync.remote_host:
-            raise ConfigError("sync.enabled=true 但 remote_host 为空")
+    # 同步配置（sync 模式已废弃）
+    # 多环境 token 共享需人工协调，不在 broker 层面自动同步
 
     return cfg
 
